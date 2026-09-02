@@ -1,0 +1,270 @@
+#include <stdio.h>
+#include <string.h>
+
+#define MAX_PATIENTS 1000
+
+// Severity ranking: higher number => higher priority
+// CRITICAL=4, HIGH=3, MEDIUM=2, LOW=1
+
+typedef struct {
+    int patientId;
+    int severity;          // 1..4
+    long arrivalSeq;       // increasing sequence to preserve FIFO
+    char doctor[50];
+} Patient;
+
+typedef struct {
+    Patient heap[MAX_PATIENTS];
+    int size;
+    long nextArrivalSeq;
+} PriorityQueue;
+
+// ---------- Utility ----------
+const char* severityName(int sev) {
+    switch (sev) {
+        case 4: return "CRITICAL";
+        case 3: return "HIGH";
+        case 2: return "MEDIUM";
+        case 1: return "LOW";
+        default: return "UNKNOWN";
+    }
+}
+
+// Return 1 if a has higher priority than b
+// Priority rule: higher severity first; if equal severity, smaller arrivalSeq first (FIFO)
+int higherPriority(Patient a, Patient b) {
+    if (a.severity != b.severity) return a.severity > b.severity;
+    return a.arrivalSeq < b.arrivalSeq;
+}
+
+// ---------- Heap Functions ----------
+void pqInit(PriorityQueue *pq) {
+    pq->size = 0;
+    pq->nextArrivalSeq = 1;
+}
+
+void swapPatients(Patient *a, Patient *b) {
+    Patient temp = *a;
+    *a = *b;
+    *b = temp;
+}
+
+void heapifyUp(PriorityQueue *pq, int idx) {
+    while (idx > 0) {
+        int parent = (idx - 1) / 2;
+        if (higherPriority(pq->heap[idx], pq->heap[parent])) {
+            swapPatients(&pq->heap[idx], &pq->heap[parent]);
+            idx = parent;
+        } else {
+            break;
+        }
+    }
+}
+
+void heapifyDown(PriorityQueue *pq, int idx) {
+    while (1) {
+        int left = 2 * idx + 1;
+        int right = 2 * idx + 2;
+        int best = idx;
+
+        if (left < pq->size && higherPriority(pq->heap[left], pq->heap[best])) best = left;
+        if (right < pq->size && higherPriority(pq->heap[right], pq->heap[best])) best = right;
+
+        if (best != idx) {
+            swapPatients(&pq->heap[idx], &pq->heap[best]);
+            idx = best;
+        } else {
+            break;
+        }
+    }
+}
+
+int pqInsert(PriorityQueue *pq, int patientId, int severity, const char *doctor) {
+    if (pq->size >= MAX_PATIENTS) return 0;
+
+    Patient p;
+    p.patientId = patientId;
+    p.severity = severity;
+    p.arrivalSeq = pq->nextArrivalSeq++;
+    strncpy(p.doctor, doctor, sizeof(p.doctor) - 1);
+    p.doctor[sizeof(p.doctor) - 1] = '\0';
+
+    pq->heap[pq->size] = p;
+    heapifyUp(pq, pq->size);
+    pq->size++;
+    return 1;
+}
+
+int pqIsEmpty(PriorityQueue *pq) {
+    return pq->size == 0;
+}
+
+Patient pqPeek(PriorityQueue *pq) {
+    return pq->heap[0];
+}
+
+Patient pqExtractMax(PriorityQueue *pq) {
+    Patient top = pq->heap[0];
+    pq->size--;
+    if (pq->size > 0) {
+        pq->heap[0] = pq->heap[pq->size];
+        heapifyDown(pq, 0);
+    }
+    return top;
+}
+
+// ---------- Search / Update (simple linear; can be replaced by Hash Table) ----------
+int findIndexByPatientId(PriorityQueue *pq, int patientId) {
+    for (int i = 0; i < pq->size; i++) {
+        if (pq->heap[i].patientId == patientId) return i;
+    }
+    return -1;
+}
+
+int updateDoctor(PriorityQueue *pq, int patientId, const char *newDoctor) {
+    int idx = findIndexByPatientId(pq, patientId);
+    if (idx == -1) return 0;
+    strncpy(pq->heap[idx].doctor, newDoctor, sizeof(pq->heap[idx].doctor) - 1);
+    pq->heap[idx].doctor[sizeof(pq->heap[idx].doctor) - 1] = '\0';
+    return 1;
+}
+
+int updateSeverity(PriorityQueue *pq, int patientId, int newSeverity) {
+    int idx = findIndexByPatientId(pq, patientId);
+    if (idx == -1) return 0;
+
+    int oldSeverity = pq->heap[idx].severity;
+    pq->heap[idx].severity = newSeverity;
+
+    // Severity change may violate heap property; fix by moving up or down
+    if (newSeverity > oldSeverity) heapifyUp(pq, idx);
+    else heapifyDown(pq, idx);
+
+    return 1;
+}
+
+void printQueue(PriorityQueue *pq) {
+    printf("\n--- CURRENT WAITING LIST (Heap order) ---\n");
+    printf("ID\tSeverity\tArrivalSeq\tDoctor\n");
+    for (int i = 0; i < pq->size; i++) {
+        printf("%d\t%s\t\t%ld\t\t%s\n",
+               pq->heap[i].patientId,
+               severityName(pq->heap[i].severity),
+               pq->heap[i].arrivalSeq,
+               pq->heap[i].doctor);
+    }
+    printf("----------------------------------------\n");
+}
+
+// ---------- Menu ----------
+void menu() {
+    printf("\n====== EMERGENCY PATIENT QUEUE SYSTEM ======\n");
+    printf("1. Register new patient\n");
+    printf("2. View next patient (peek)\n");
+    printf("3. Treat next patient (extract)\n");
+    printf("4. Search patient by ID\n");
+    printf("5. Update doctor by ID\n");
+    printf("6. Update severity by ID\n");
+    printf("7. Display queue\n");
+    printf("0. Exit\n");
+    printf("Choose: ");
+}
+
+int main() {
+    PriorityQueue pq;
+    pqInit(&pq);
+
+    int choice;
+    while (1) {
+        menu();
+        if (scanf("%d", &choice) != 1) break;
+
+        if (choice == 0) {
+            printf("Exiting...\n");
+            break;
+        }
+
+        if (choice == 1) {
+            int id, sev;
+            char doc[50];
+            printf("Enter Patient ID: ");
+            scanf("%d", &id);
+            printf("Enter Severity (4=CRITICAL, 3=HIGH, 2=MEDIUM, 1=LOW): ");
+            scanf("%d", &sev);
+            printf("Enter Assigned Doctor: ");
+            scanf(" %49[^\n]", doc);
+
+            if (sev < 1 || sev > 4) {
+                printf("Invalid severity!\n");
+            } else if (pqInsert(&pq, id, sev, doc)) {
+                printf("Patient registered successfully.\n");
+            } else {
+                printf("Queue full! Cannot insert.\n");
+            }
+        }
+        else if (choice == 2) {
+            if (pqIsEmpty(&pq)) {
+                printf("No patients waiting.\n");
+            } else {
+                Patient p = pqPeek(&pq);
+                printf("Next Patient: ID=%d, Severity=%s, Doctor=%s\n",
+                       p.patientId, severityName(p.severity), p.doctor);
+            }
+        }
+        else if (choice == 3) {
+            if (pqIsEmpty(&pq)) {
+                printf("No patients waiting.\n");
+            } else {
+                Patient p = pqExtractMax(&pq);
+                printf("Treated Patient: ID=%d, Severity=%s, Doctor=%s\n",
+                       p.patientId, severityName(p.severity), p.doctor);
+            }
+        }
+        else if (choice == 4) {
+            int id;
+            printf("Enter Patient ID to search: ");
+            scanf("%d", &id);
+            int idx = findIndexByPatientId(&pq, id);
+            if (idx == -1) {
+                printf("Patient not found.\n");
+            } else {
+                Patient p = pq.heap[idx];
+                printf("Found: ID=%d, Severity=%s, ArrivalSeq=%ld, Doctor=%s\n",
+                       p.patientId, severityName(p.severity), p.arrivalSeq, p.doctor);
+            }
+        }
+        else if (choice == 5) {
+            int id;
+            char doc[50];
+            printf("Enter Patient ID: ");
+            scanf("%d", &id);
+            printf("Enter New Doctor: ");
+            scanf(" %49[^\n]", doc);
+
+            if (updateDoctor(&pq, id, doc)) printf("Doctor updated.\n");
+            else printf("Patient not found.\n");
+        }
+        else if (choice == 6) {
+            int id, sev;
+            printf("Enter Patient ID: ");
+            scanf("%d", &id);
+            printf("Enter New Severity (4..1): ");
+            scanf("%d", &sev);
+
+            if (sev < 1 || sev > 4) {
+                printf("Invalid severity!\n");
+            } else if (updateSeverity(&pq, id, sev)) {
+                printf("Severity updated and queue reordered.\n");
+            } else {
+                printf("Patient not found.\n");
+            }
+        }
+        else if (choice == 7) {
+            printQueue(&pq);
+        }
+        else {
+            printf("Invalid choice.\n");
+        }
+    }
+    return 0;
+}
